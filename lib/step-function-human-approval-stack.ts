@@ -61,7 +61,6 @@ export class StepFunctionHumanApprovalStack extends cdk.Stack {
     this.apiUrl = api.url;
 
     // Step 3: Create Step Functions State Machine with Manual Approval (waiting for user response)
-    const approvalToken = uuid.v4();
     
     // const approvalTask = new tasks.SnsPublish(this, 'SendApprovalRequest', {
     //   topic: approvalTopic,
@@ -99,6 +98,60 @@ export class StepFunctionHumanApprovalStack extends cdk.Stack {
     //   iamResources: ['*'],
     // });
 
+    // const passDefinition = new sfn.Pass(this, 'PassExecutionContext', {
+    //   result: sfn.Result.fromObject({
+    //     ExecutionContext: {
+    //       Execution: {
+    //         Name: sfn.JsonPath.stringAt('$$.Execution.Name'),
+    //       },
+    //       StateMachine: {
+    //         Name: sfn.JsonPath.stringAt('$$.StateMachine.Name'),
+    //       },
+    //       Task: {
+    //         Token: sfn.JsonPath.taskToken,
+    //       },
+    //     },
+    //     APIGatewayEndpoint: 'https://0aex7nqjn6.execute-api.us-east-1.amazonaws.com/prod/',  // Pass the API Gateway URL here
+    //   }),
+    // });
+
+    // const approvalTask = new tasks.SnsPublish(this, 'SendApprovalEmail', {
+    //   topic: approvalTopic,
+    //   integrationPattern: sfn.IntegrationPattern.WAIT_FOR_TASK_TOKEN,
+    //   message: sfn.TaskInput.fromObject({
+    //     "Message": sfn.JsonPath.format(
+    //   "Approve: https://0aex7nqjn6.execute-api.us-east-1.amazonaws.com/prod/approve?action=approve&ex=&sm=&taskToken={}",
+    //   sfn.JsonPath.stringAt('$$.Task.Token')
+    // )
+    //     // "Message": {
+    //     //   "Fn::Join": [
+    //     //     "",
+    //     //     [
+    //     //       "Welcome! \n\nThis is an email requiring an approval for a step functions execution.\n\n",
+    //     //       "Execution Name -> ",
+    //     //       sfn.JsonPath.stringAt("$.ExecutionContext.Execution.Name"),
+    //     //       "\n\nApprove: https://0aex7nqjn6.execute-api.us-east-1.amazonaws.com/prod/approve?action=approve&ex=",
+    //     //       sfn.JsonPath.stringAt("$.ExecutionContext.Execution.Name"),
+    //     //       "&sm=",
+    //     //       sfn.JsonPath.stringAt("$.ExecutionContext.StateMachine.Name"),
+    //     //       "&taskToken=",
+    //     //       sfn.JsonPath.stringAt("$.ExecutionContext.Task.Token"),
+    //     //       "\n\nReject:https://0aex7nqjn6.execute-api.us-east-1.amazonaws.com/prod/approve?action=reject?action=reject&ex=",
+    //     //       sfn.JsonPath.stringAt("$.ExecutionContext.Execution.Name"),
+    //     //       "&sm=",
+    //     //       sfn.JsonPath.stringAt("$.ExecutionContext.StateMachine.Name"),
+    //     //       "&taskToken=",
+    //     //       sfn.JsonPath.stringAt("$.ExecutionContext.Task.Token"),
+    //     //       "\n\nThanks for using Step Functions!"
+    //     //     ]
+    //     //   ]
+    //     // },
+    //     // "Subject": "Required approval from AWS Step Functions"
+    //   }),
+    //   subject: "Required approval from AWS Step Functions",
+    //   resultPath: '$.snsResult',
+    // });
+
     const approvalTask = new tasks.LambdaInvoke(this, 'Invoke SNS Lambda', {
       lambdaFunction: snsLambda,
       integrationPattern: sfn.IntegrationPattern.WAIT_FOR_TASK_TOKEN,
@@ -111,9 +164,9 @@ export class StepFunctionHumanApprovalStack extends cdk.Stack {
       resultPath: '$.lambdaResult',  // Capture the result of the Lambda invocation
     });
 
-    // const approvalWaitTask = new sfn.Wait(this, 'WaitForApproval', {
-    //   time: sfn.WaitTime.duration(cdk.Duration.seconds(300)),
-    // });
+    const approvalWaitTask = new sfn.Wait(this, 'WaitForApproval', {
+      time: sfn.WaitTime.duration(cdk.Duration.seconds(300)),
+    });
 
     const isTokenValid = new sfn.Choice(this, 'IsTokenValid')
       .when(sfn.Condition.stringEquals('$.lambdaResult.Status', 'Approved! Task approved by'), new sfn.Succeed(this, 'ApprovalReceived'))
@@ -127,7 +180,7 @@ export class StepFunctionHumanApprovalStack extends cdk.Stack {
 
 
     const definition = approvalTask
-      // .next(approvalWaitTask)
+      .next(approvalWaitTask)
       .next(isTokenValid);
 
     // Create the Step Functions state machine
