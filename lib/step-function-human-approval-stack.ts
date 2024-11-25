@@ -8,6 +8,8 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import { Construct } from 'constructs';
 import * as uuid from 'uuid';
 import path = require('path');
+import { Rule, RuleTargetInput } from 'aws-cdk-lib/aws-events';
+import { SnsTopic as SNSTarget } from 'aws-cdk-lib/aws-events-targets';
 
 export class StepFunctionHumanApprovalStack extends cdk.Stack {
   public readonly apiUrl: string;
@@ -60,98 +62,6 @@ export class StepFunctionHumanApprovalStack extends cdk.Stack {
     });
     this.apiUrl = api.url;
 
-    // Step 3: Create Step Functions State Machine with Manual Approval (waiting for user response)
-    
-    // const approvalTask = new tasks.SnsPublish(this, 'SendApprovalRequest', {
-    //   topic: approvalTopic,
-    //   integrationPattern: sfn.IntegrationPattern.WAIT_FOR_TASK_TOKEN,
-    //   message: sfn.TaskInput.fromObject({
-    //     message: 'Please approve or reject the request by clicking the link below:',
-    //     approvalLink: `${api.url}approve?token=${approvalToken}&taskToken=${sfn.JsonPath.stringAt('$.taskToken')}`,  // User clicks this to approve
-    //     waitTime: 30,
-    //     Timeout: 30,
-    //     token: approvalToken
-    //   }),
-    //   resultPath: '$.snsResult',
-    // });
-
-    // const approvalTask2 = new tasks.CallAwsService(this, 'SnsPublish2', {
-    //   service: 'sns',
-    //   action: 'publish',
-    //   parameters: {
-    //     TopicArn: approvalTopic.topicArn,
-    //     Message: {
-    //       message: 'Please approve or reject the request by clicking the link below:',
-    //       approvalLink: sfn.JsonPath.format(
-    //         '{}/approve?token={}&taskToken={}', 
-    //         this.apiUrl,  // URL of your API Gateway
-    //         approvalToken,  // Path to your approval token
-    //         sfn.JsonPath.taskToken  // Path to the task token
-    //       ),
-    //       region: cdk.Aws.REGION,  // Use CDK to inject the region dynamically
-    //       waitTime: 30,
-    //       Timeout: 30,
-    //     },
-    //     taskToken: sfn.JsonPath.taskToken,
-    //     // 'Message.$': "States.Format('transaction {} was processed successfully!', $.transactionId)",
-    //   },
-    //   iamResources: ['*'],
-    // });
-
-    // const passDefinition = new sfn.Pass(this, 'PassExecutionContext', {
-    //   result: sfn.Result.fromObject({
-    //     ExecutionContext: {
-    //       Execution: {
-    //         Name: sfn.JsonPath.stringAt('$$.Execution.Name'),
-    //       },
-    //       StateMachine: {
-    //         Name: sfn.JsonPath.stringAt('$$.StateMachine.Name'),
-    //       },
-    //       Task: {
-    //         Token: sfn.JsonPath.taskToken,
-    //       },
-    //     },
-    //     APIGatewayEndpoint: 'https://0aex7nqjn6.execute-api.us-east-1.amazonaws.com/prod/',  // Pass the API Gateway URL here
-    //   }),
-    // });
-
-    // const approvalTask = new tasks.SnsPublish(this, 'SendApprovalEmail', {
-    //   topic: approvalTopic,
-    //   integrationPattern: sfn.IntegrationPattern.WAIT_FOR_TASK_TOKEN,
-    //   message: sfn.TaskInput.fromObject({
-    //     "Message": sfn.JsonPath.format(
-    //   "Approve: https://0aex7nqjn6.execute-api.us-east-1.amazonaws.com/prod/approve?action=approve&ex=&sm=&taskToken={}",
-    //   sfn.JsonPath.stringAt('$$.Task.Token')
-    // )
-    //     // "Message": {
-    //     //   "Fn::Join": [
-    //     //     "",
-    //     //     [
-    //     //       "Welcome! \n\nThis is an email requiring an approval for a step functions execution.\n\n",
-    //     //       "Execution Name -> ",
-    //     //       sfn.JsonPath.stringAt("$.ExecutionContext.Execution.Name"),
-    //     //       "\n\nApprove: https://0aex7nqjn6.execute-api.us-east-1.amazonaws.com/prod/approve?action=approve&ex=",
-    //     //       sfn.JsonPath.stringAt("$.ExecutionContext.Execution.Name"),
-    //     //       "&sm=",
-    //     //       sfn.JsonPath.stringAt("$.ExecutionContext.StateMachine.Name"),
-    //     //       "&taskToken=",
-    //     //       sfn.JsonPath.stringAt("$.ExecutionContext.Task.Token"),
-    //     //       "\n\nReject:https://0aex7nqjn6.execute-api.us-east-1.amazonaws.com/prod/approve?action=reject?action=reject&ex=",
-    //     //       sfn.JsonPath.stringAt("$.ExecutionContext.Execution.Name"),
-    //     //       "&sm=",
-    //     //       sfn.JsonPath.stringAt("$.ExecutionContext.StateMachine.Name"),
-    //     //       "&taskToken=",
-    //     //       sfn.JsonPath.stringAt("$.ExecutionContext.Task.Token"),
-    //     //       "\n\nThanks for using Step Functions!"
-    //     //     ]
-    //     //   ]
-    //     // },
-    //     // "Subject": "Required approval from AWS Step Functions"
-    //   }),
-    //   subject: "Required approval from AWS Step Functions",
-    //   resultPath: '$.snsResult',
-    // });
-
     const approvalTask = new tasks.LambdaInvoke(this, 'Invoke SNS Lambda', {
       lambdaFunction: snsLambda,
       integrationPattern: sfn.IntegrationPattern.WAIT_FOR_TASK_TOKEN,
@@ -164,10 +74,6 @@ export class StepFunctionHumanApprovalStack extends cdk.Stack {
       resultPath: '$.lambdaResult',  // Capture the result of the Lambda invocation
     });
 
-    const approvalWaitTask = new sfn.Wait(this, 'WaitForApproval', {
-      time: sfn.WaitTime.duration(cdk.Duration.seconds(300)),
-    });
-
     const isTokenValid = new sfn.Choice(this, 'IsTokenValid')
       .when(sfn.Condition.stringEquals('$.lambdaResult.Status', 'Approved! Task approved by'), new sfn.Succeed(this, 'ApprovalReceived'))
       .otherwise(new sfn.Fail(this, 'TokenInvalid', {
@@ -175,12 +81,10 @@ export class StepFunctionHumanApprovalStack extends cdk.Stack {
         cause: 'The provided token is invalid.',
       }));
 
-    // const approvalSuccess = new sfn.Succeed(this, 'ApprovalReceived');
 
 
 
     const definition = approvalTask
-      .next(approvalWaitTask)
       .next(isTokenValid);
 
     // Create the Step Functions state machine
@@ -191,6 +95,18 @@ export class StepFunctionHumanApprovalStack extends cdk.Stack {
 
     this.stateMachineArn = stateMachine.stateMachineArn;
 
+    const rule = new Rule(this, 'StepFunctionStateChangeRule', {
+      eventPattern: {
+        source: ['aws.states'],
+        detailType: ['Step Functions Execution Status Change'],
+        detail: {
+          stateMachineArn: [this.stateMachineArn],
+          status: ['SUCCEEDED', 'FAILED'], // Match success or failure
+        },
+      },
+    });
+
+    rule.addTarget(new SNSTarget(approvalTopic))
     // Add permission for Step Functions to publish to the SNS topic
     approvalTopic.grantPublish(stateMachine.role);
   }
