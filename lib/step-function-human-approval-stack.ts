@@ -10,6 +10,7 @@ import * as uuid from 'uuid';
 import path = require('path');
 import { Rule, RuleTargetInput } from 'aws-cdk-lib/aws-events';
 import { SnsTopic as SNSTarget } from 'aws-cdk-lib/aws-events-targets';
+import { Effect, PolicyStatement } from 'aws-cdk-lib/aws-iam';
 
 export class StepFunctionHumanApprovalStack extends cdk.Stack {
   public readonly apiUrl: string;
@@ -42,6 +43,12 @@ export class StepFunctionHumanApprovalStack extends cdk.Stack {
     });
 
     approveResource.addMethod('GET', new apigateway.LambdaIntegration(approvalLambda));
+
+    approvalLambda.addToRolePolicy(new PolicyStatement({
+      actions: ['states:SendTaskSuccess', 'states:SendTaskFailure'],
+      effect: Effect.ALLOW,
+      resources: ['*']
+    }))
 
     const snsLambda = new lambda.Function(this, 'SnsPublisherLambda', {
       runtime: lambda.Runtime.NODEJS_20_X,  // Node.js runtime
@@ -101,7 +108,7 @@ export class StepFunctionHumanApprovalStack extends cdk.Stack {
         detailType: ['Step Functions Execution Status Change'],
         detail: {
           stateMachineArn: [this.stateMachineArn],
-          status: ['SUCCEEDED', 'FAILED'], // Match success or failure
+          status: ['FAILED', 'TIMED_OUT'], // Match success or failure
         },
       },
     });
